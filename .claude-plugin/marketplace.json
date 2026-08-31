@@ -1,0 +1,14 @@
+{
+  "name": "moorlack-aec-tools",
+  "description": "AEC Model Bridge extensions for Claude Code.",
+  "owner": {
+    "name": "Moorlack"
+  },
+  "plugins": [
+    {
+      "name": "aec-revit-bim",
+      "source": "./plugins/aec-revit-bim",
+      "description": "Revit BIM workflows for AEC Model Bridge: design, creation, editing, analysis, MEP, structure, and documentation."
+    }
+  ]
+}

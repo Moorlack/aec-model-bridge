@@ -1,0 +1,9 @@
+{
+  "name": "aec-revit-bim",
+  "description": "AEC Model Bridge workflows and slash commands for live Revit BIM work.",
+  "author": {
+    "name": "Moorlack"
+  },
+  "repository": "https://github.com/Moorlack/aec-model-bridge",
+  "license": "Apache-2.0"
+}
