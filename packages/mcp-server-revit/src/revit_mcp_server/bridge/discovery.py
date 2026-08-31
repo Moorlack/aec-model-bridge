@@ -84,7 +84,23 @@ def discover_switches(registry_dir: Path = REGISTRY_DIR) -> Dict[str, SwitchInfo
                     logger.warning("Failed to delete stale entry %s: %s", file_path, e)
                 continue
             
-            # Prefer the most recently started switch for a given provider
+            # Keep one entry per host version so multiple Revit versions can run
+            # simultaneously. Preserve the provider-only key as the latest instance
+            # for clients that do not select a version.
+            version_key = f"{info.provider_id}-{info.host_version}"
+
+            if version_key in switches:
+                existing = switches[version_key]
+                try:
+                    existing_start = datetime.fromisoformat(existing.started_at.replace('Z', '+00:00'))
+                    new_start = datetime.fromisoformat(info.started_at.replace('Z', '+00:00'))
+                    if new_start > existing_start:
+                        switches[version_key] = info
+                except ValueError:
+                    switches[version_key] = info
+            else:
+                switches[version_key] = info
+
             if info.provider_id in switches:
                 existing = switches[info.provider_id]
                 try:

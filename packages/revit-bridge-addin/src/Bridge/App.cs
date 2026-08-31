@@ -35,13 +35,22 @@ namespace RevitBridge.Bridge
                 Server = _server; // Expose statically
                 _server.Start();
 
-                try
+                // Revit 2025 can crash in Manage Links after the optional WebView2
+                // pane has been initialized. The MCP bridge does not depend on that UI.
+                if (string.Equals(RevitVersion, "2025", StringComparison.Ordinal))
                 {
-                    BridgePanelProvider.Register(application);
+                    Log.Information("Disabled AEC Model Bridge WebView2 dockable pane for Revit 2025 Manage Links stability");
                 }
-                catch (Exception ex)
+                else
                 {
-                    Log.Error(ex, "Bridge started, but the AEC Model Bridge dockable pane could not be registered");
+                    try
+                    {
+                        BridgePanelProvider.Register(application);
+                    }
+                    catch (Exception ex)
+                    {
+                        Log.Error(ex, "Bridge started, but the AEC Model Bridge dockable pane could not be registered");
+                    }
                 }
 
                 try
@@ -53,15 +62,18 @@ namespace RevitBridge.Bridge
                     Log.Error(ex, "Bridge started, but the AEC Model Bridge ribbon could not be created");
                 }
 
-                try
+                if (!string.Equals(RevitVersion, "2025", StringComparison.Ordinal))
                 {
-                    // Fire-and-forget: checks/launches in the background, never blocks startup.
-                    _hubLauncher = new PanelHubLauncher();
-                    _hubLauncher.EnsureRunning();
-                }
-                catch (Exception ex)
-                {
-                    Log.Error(ex, "Bridge started, but the panel hub could not be launched");
+                    try
+                    {
+                        // Fire-and-forget: checks/launches in the background, never blocks startup.
+                        _hubLauncher = new PanelHubLauncher();
+                        _hubLauncher.EnsureRunning();
+                    }
+                    catch (Exception ex)
+                    {
+                        Log.Error(ex, "Bridge started, but the panel hub could not be launched");
+                    }
                 }
 
                 application.ControlledApplication.DocumentChanged += (sender, args) =>

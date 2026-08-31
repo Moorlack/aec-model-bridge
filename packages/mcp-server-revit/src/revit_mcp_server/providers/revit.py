@@ -44,10 +44,17 @@ class RevitProvider(AECProvider):
             token = None
 
             if not url:
-                if "revit" in switches:
-                    url = switches["revit"].endpoint
-                    token = switches["revit"].session_token
-                    logger.info("Resolved Revit switch from registry: %s", url)
+                target_version = getattr(config, "target_version", None)
+                switch_key = f"revit-{target_version}" if target_version else "revit"
+
+                if switch_key in switches:
+                    url = switches[switch_key].endpoint
+                    token = switches[switch_key].session_token
+                    logger.info(
+                        "Resolved Revit switch from registry: version=%s endpoint=%s",
+                        target_version or "latest",
+                        url,
+                    )
                 else:
                     url = "http://127.0.0.1:3000"
                     for port in (3000, 3002):
@@ -79,8 +86,43 @@ class RevitProvider(AECProvider):
         # Defined below to keep the class readable.
         return self._capabilities
 
+    def _refresh_bridge_from_registry(self) -> None:
+        """Adopt the live, version-specific Contract v2 endpoint when Revit starts later."""
+        if self.mode != BridgeMode.bridge or self.bridge_url:
+            return
+
+        from ..bridge.discovery import discover_switches
+
+        switches = discover_switches()
+        target_version = getattr(config, "target_version", None)
+        switch_key = f"revit-{target_version}" if target_version else "revit"
+        switch = switches.get(switch_key)
+        if not switch:
+            return
+
+        current_url = getattr(self._bridge, "base_url", "").rstrip("/")
+        current_token = getattr(self._bridge, "token", None)
+        endpoint = switch.endpoint.rstrip("/")
+        if current_url == endpoint and current_token == switch.session_token:
+            return
+
+        logger.info(
+            "Refreshing Revit bridge from registry: version=%s endpoint=%s",
+            target_version or "latest",
+            endpoint,
+        )
+        bridge = BridgeClient(endpoint, token=switch.session_token)
+        if hasattr(bridge, "initialize"):
+            try:
+                bridge.initialize()
+            except Exception as e:
+                logger.warning("Newly discovered Revit bridge is not ready yet: %s", e)
+                return
+        self._bridge = bridge
+
     async def check_health(self) -> Dict[str, Any]:
         if self.mode == BridgeMode.bridge:
+            self._refresh_bridge_from_registry()
             try:
                 # Direct check
                 if hasattr(self._bridge, '_get'):
@@ -91,6 +133,9 @@ class RevitProvider(AECProvider):
         return {"status": "healthy", "mode": "mock"}
 
     async def execute_tool(self, name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
+        if self.mode == BridgeMode.bridge:
+            self._refresh_bridge_from_registry()
+
         # Check path parameters for workspace compliance
         self._assert_paths_in_workspace(arguments)
 
