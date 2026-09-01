@@ -251,7 +251,7 @@ class RecipeRunnerModule:
             "steps": step_results,
         }
 
-    def list_recipes(self, **_) -> Dict[str, Any]:
+    def list_recipes(self, workspace: Any = None, **_) -> Dict[str, Any]:
         recipes = _list_recipes()
         return {"count": len(recipes), "recipes": recipes}
 

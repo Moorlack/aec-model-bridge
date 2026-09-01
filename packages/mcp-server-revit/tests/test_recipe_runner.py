@@ -1,4 +1,5 @@
 """Tests for Phase 15 — Recipe Runner module (AI orchestration)."""
+import asyncio
 import importlib.util
 import pytest
 from pathlib import Path
@@ -141,6 +142,15 @@ def test_list_recipes_includes_builtins(module):
     assert "nightly_health_check" in recipe_ids
     assert "snapshot_publish" in recipe_ids
     assert "export_clash_import" in recipe_ids
+
+
+def test_list_recipes_accepts_dispatcher_workspace_argument(module, workspace):
+    """Regression: module dispatch must not pass an argument positionally."""
+    provider = object.__new__(ModuleProvider)
+    provider.workspace = workspace
+    result = asyncio.run(provider._run_callable(module.list_recipes, {}))
+    assert "count" in result
+    assert "recipes" in result
 
 
 # --- Dry run ---
