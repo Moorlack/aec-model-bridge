@@ -34,6 +34,7 @@ Read the relevant playbook before acting:
 - Batch only equivalent, unambiguous operations when the live tool accepts batching. Never send competing Revit mutations in parallel.
 - Do not ask a separate confirmation for every line or identical element when the user has authorized an unambiguous outcome. For deletion or a project-wide change, first identify and count the scope; ask only when that scope is not already authorized.
 - Use `plan_actions`, `approve_plan`, and `execute_plan` when the server's approval mode requires it or a reversible plan is appropriate. Use `rollback_plan` only for the exact plan the user asks to undo.
-- Use `revit_execute_python`, `revit_invoke_method`, and `revit_reflect_set` only when no typed tool fits and the user has authorized the extra risk.
+- For ordinary type or parameter work, do not use `revit_execute_python`, `revit_invoke_method`, or `revit_reflect_set` when a typed creation, replacement, or setter tool exists. A client timeout from a raw call can still leave Revit changed: stop, run health and a narrow read-only inspection, and never retry it blindly. Use raw API tools only when no typed tool fits and the user has authorized that extra risk.
+- If bulk parameter enumeration on a system element reports that a parameter is not shared, use geometry and a targeted parameter read for the required fact; do not fall back to reflection merely to retrieve it.
 - After every mutation, verify the smallest relevant result with a read-only tool, geometry/property inspection, a schedule/view, or `revit_get_snapshot_delta`. A successful request alone is not proof of success.
 - Saving, syncing, relinquishing, closing, and exporting outside an approved path need explicit user authority.

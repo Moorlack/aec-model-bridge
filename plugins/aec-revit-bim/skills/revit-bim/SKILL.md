@@ -15,7 +15,7 @@ Use this skill with AEC Model Bridge and an open Revit project. Prefer the live 
 4. Follow model dependencies: datum; structure; walls/partitions; hosted openings; floors/roof; MEP; then documentation.
 5. Verify every mutation with an appropriate read tool, geometry/property query, schedule/view, or snapshot delta.
 
-Do not ask for separate permission for every unambiguous line or instance after the user has authorized the outcome. For a deletion or wide filter, identify and count the scope first; ask once only when that scope remains unclear. Prefer typed tools; use raw Revit API tools only when a typed tool cannot do the requested work and the user has authorized that risk.
+Do not ask for separate permission for every unambiguous line or instance after the user has authorized the outcome. For a deletion or wide filter, identify and count the scope first; ask once only when that scope remains unclear. Prefer typed tools. Do not use `revit_invoke_method`, `revit_reflect_set`, or `revit_execute_python` for ordinary type or parameter work when a typed tool exists. A client timeout from a raw call can still leave Revit changed, so inspect the target before any retry. Use raw API tools only when a typed tool cannot do the requested work and the user has authorized that risk. If broad parameter enumeration on a system element reports a non-shared parameter, use geometry or a targeted parameter read instead of reflection.
 
 Read the relevant reference before specialized work:
 
