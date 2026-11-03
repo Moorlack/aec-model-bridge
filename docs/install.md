@@ -1,12 +1,13 @@
-# Installation
+# Install AEC Model Bridge
 
-AEC Model Bridge has two components:
+AEC Model Bridge has two parts:
 
-1. A Python MCP server used by the AI client.
-2. A native add-in loaded by Revit.
+1. A Python MCP server that your AI client starts.
+2. A native add-in that Revit loads.
 
-Both are required for live Revit automation. Mock mode only requires the Python
-server.
+You need both to work with a live Revit model. Mock mode needs only the Python
+server. It uses sample data. Supported Revit versions are 2024 to 2027. For
+release numbering, see [versioning](versioning.md).
 
 ## Requirements
 
@@ -24,6 +25,41 @@ General requirements:
 - Git
 - A licensed Revit installation for live bridge mode
 
+## Download the installer
+
+This is the easiest way to install on Windows. You do not need Python, Git or build tools.
+
+1. Open the [latest release](https://github.com/Sam-AEC/aec-model-bridge/releases/latest)
+   and download `AECModelBridge-Setup-<version>.exe`.
+2. Close Revit, then double-click the file. Windows SmartScreen may warn that the
+   publisher is unknown, because the installer is not code-signed yet. Choose
+   **More info**, then **Run anyway**. To check the download, compare it with the
+   checksum in `SHA256SUMS.txt` on the same page.
+3. On the *Revit versions* page, the installer has already ticked the Revit years it
+   found on your computer. Change them if you like. You can also tick *Set up Claude
+   Desktop and VS Code*. The installer first copies your current settings to a
+   `.aec-backup-<date>` file.
+4. Start Revit and look for the **AEC Bridge** tab.
+
+The installer needs no administrator rights. It puts the add-in in
+`C:\ProgramData\AECModelBridge\bin\<year>`, the bundled Python and MCP server in
+`C:\ProgramData\AECModelBridge\python`, and a per-user manifest in
+`%APPDATA%\Autodesk\Revit\Addins\<year>`. Running the installer again upgrades the
+existing install.
+To remove everything, open *Apps > Installed apps > AEC Model Bridge > Uninstall*.
+Close Revit first. Both Setup and the uninstaller stop if Revit is running.
+
+For a silent install (IT deployment):
+
+```powershell
+.\AECModelBridge-Setup-<version>.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /COMPONENTS="y2025,y2026"
+```
+
+`/COMPONENTS` takes `y2024`, `y2025`, `y2026` and `y2027`. Leave it out to use the
+Revit versions the installer detects. Add `/TASKS="mcpclients"` to set up Claude Desktop
+and VS Code. Add `/LOG="setup.log"` to keep a log. To build the installer yourself, see
+[build and install scripts](build-and-install-scripts.md).
+
 ## Install From Source
 
 Clone the repository and create a virtual environment:
@@ -37,20 +73,21 @@ py -m venv .venv
 python -m pip install -e packages/mcp-server-revit
 ```
 
-Choose the Revit version installed on your machine:
+Enter the Revit year installed on your machine:
 
 ```powershell
 $RevitVersion = Read-Host "Revit year (2024, 2025, 2026, or 2027)"
 ```
 
-Build, package, and install the matching add-in:
+Build, package and install the add-in for that year. To only build, run
+`.\scripts\build-addin.ps1 -RevitVersion 2026` (use your Revit year):
 
 ```powershell
 .\scripts\package.ps1 -RevitVersion $RevitVersion
 .\scripts\install.ps1 -RevitVersion $RevitVersion
 ```
 
-The default installation is per user:
+The default install is per user. It uses these locations:
 
 ```text
 Add-in manifest:
@@ -63,7 +100,7 @@ Configuration:
 C:\ProgramData\AECModelBridge\config\default.json
 ```
 
-For an all-user manifest installation:
+To install the manifest for all users:
 
 ```powershell
 .\scripts\install.ps1 -RevitVersion $RevitVersion -AllUsers
@@ -75,15 +112,14 @@ To package every supported Revit version:
 .\scripts\package.ps1 -RevitVersion All
 ```
 
-You can then run `install.ps1` once for each installed Revit year.
+Then run `install.ps1` once for each Revit year you have installed.
 
 ## Install From a Release
 
 Download a package matching your Revit version from
 [GitHub Releases](https://github.com/Sam-AEC/aec-model-bridge/releases).
 
-Extract the archive, check the available folders under `bin`, and install the
-matching year:
+Extract the archive and list the folders under `bin`. Then install your year:
 
 ```powershell
 Get-ChildItem .\bin -Directory
@@ -91,12 +127,14 @@ $RevitVersion = Read-Host "Choose one of the listed Revit years"
 .\install.ps1 -RevitVersion $RevitVersion
 ```
 
-If a prebuilt package is not available for your year, use the source
-installation above.
+If there is no prebuilt package for your year, use the source install above.
 
-## Configure an MCP Client
+## Configure an MCP client
 
-The server requires a bridge URL and an allowed workspace:
+If you do not set a workspace, the server uses `~/Documents/AEC Model Bridge`.
+The examples below set one explicitly. In bridge mode the server connects to the
+newest open Revit by default. Set `MCP_REVIT_HOST_VERSION` to pick a specific
+Revit year:
 
 ```json
 {
@@ -106,7 +144,16 @@ The server requires a bridge URL and an allowed workspace:
       "args": ["-m", "revit_mcp_server.mcp_server"],
       "env": {
         "MCP_REVIT_MODE": "bridge",
-        "MCP_REVIT_BRIDGE_URL": "http://127.0.0.1:3000",
+        "MCP_REVIT_WORKSPACE_DIR": "C:\\RevitProjects",
+        "MCP_REVIT_ALLOWED_DIRECTORIES": "C:\\RevitProjects"
+      }
+    },
+    "aec-model-bridge-revit-2026": {
+      "command": "C:\\path\\to\\aec-model-bridge\\.venv\\Scripts\\python.exe",
+      "args": ["-m", "revit_mcp_server.mcp_server"],
+      "env": {
+        "MCP_REVIT_MODE": "bridge",
+        "MCP_REVIT_HOST_VERSION": "2026",
         "MCP_REVIT_WORKSPACE_DIR": "C:\\RevitProjects",
         "MCP_REVIT_ALLOWED_DIRECTORIES": "C:\\RevitProjects"
       }
@@ -115,19 +162,22 @@ The server requires a bridge URL and an allowed workspace:
 }
 ```
 
-The allowed directories value accepts multiple paths separated by semicolons.
+`MCP_REVIT_ALLOWED_DIRECTORIES` accepts several paths separated by semicolons.
 
-VS Code users can start from [`.vscode/mcp.json`](../.vscode/mcp.json).
+In VS Code, you can start from [`.vscode/mcp.json`](../.vscode/mcp.json).
 
-Clients with MCP Bundle support can install the `.mcpb` asset from the latest
-release. The Revit add-in must still be installed separately.
+If your client supports MCP Bundles, install the `.mcpb` file from the latest
+release. You still need to install the Revit add-in separately.
 
-## Verify the Bridge
+## Verify the bridge
 
-Restart Revit after installing or replacing the add-in. Open a model and run:
+When Revit starts, the add-in writes an endpoint file under
+`%LOCALAPPDATA%\AECModelBridge\registry`. This command reads that file and calls the bridge:
 
 ```powershell
-Invoke-RestMethod http://127.0.0.1:3000/health
+$registry = Get-ChildItem "$env:LOCALAPPDATA\AECModelBridge\registry\revit-*.json" | Select-Object -First 1
+$switch = Get-Content $registry.FullName -Raw | ConvertFrom-Json
+Invoke-RestMethod "$($switch.endpoint)/health"
 ```
 
 The response should include:
@@ -139,11 +189,11 @@ The response should include:
 }
 ```
 
-The reported year will match the running Revit version.
+The reported year matches the Revit version that is running.
 
-## Mock Mode
+## Mock mode
 
-Mock mode runs the MCP server without Revit:
+Mock mode runs the MCP server without Revit. It returns sample data:
 
 ```powershell
 $env:MCP_REVIT_MODE = "mock"
@@ -153,7 +203,7 @@ $env:MCP_REVIT_ALLOWED_DIRECTORIES = "C:\revit-workspace"
 python -m revit_mcp_server
 ```
 
-Run the automated tests with:
+To run the automated tests:
 
 ```powershell
 python -m pytest packages/mcp-server-revit/tests
@@ -164,10 +214,10 @@ python -m pytest packages/mcp-server-revit/tests
 ### Bridge connection refused
 
 - Confirm Revit is running.
-- Confirm the `AEC Bridge` ribbon tab is present.
+- Confirm the `AEC Bridge` ribbon tab is present. It has Connection, Workflows and Tools panels.
 - Check that the manifest year matches the running Revit year.
 - Check the bridge log at `%APPDATA%\AECModelBridge\Logs\bridge.jsonl`.
-- Confirm no other process is using port `3000`.
+- Only if you turned on legacy mode (`MCP_REVIT_LEGACY_PORT=1`): confirm no other program is using port `3000`. The default mode picks a free port by itself.
 
 ### Add-in build fails
 
@@ -175,14 +225,14 @@ python -m pytest packages/mcp-server-revit/tests
 - For Revit 2024, install the .NET Framework 4.8 developer pack.
 - Confirm the selected `-RevitVersion` is one of `2024`, `2025`, `2026`, or
   `2027`.
-- If Revit is not installed on the build machine, the project uses matching
-  Revit API reference packages for compilation.
+- If Revit is not installed on the build machine, the build uses the matching
+  Revit API reference packages.
 
 ### Workspace access denied
 
 - Use absolute paths for `MCP_REVIT_WORKSPACE_DIR`.
-- Include every required directory in `MCP_REVIT_ALLOWED_DIRECTORIES`.
-- Separate multiple Windows paths with semicolons.
+- List every folder you need in `MCP_REVIT_ALLOWED_DIRECTORIES`.
+- Separate several Windows paths with semicolons.
 
-See the [configuration reference](configuration-reference.md) and
-[security guide](security.md) for advanced settings.
+For more settings, see the [configuration reference](configuration-reference.md)
+and the [security guide](security.md).

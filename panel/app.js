@@ -15,6 +15,7 @@ const state = {
   host: null,
   snapshot: null,
   llm: null,
+  providers: null,
   plans: [],
   findings: [],
   reports: [],
@@ -27,6 +28,7 @@ const hostStatus = document.getElementById("host-status");
 const systemAlerts = document.getElementById("system-alerts");
 const title = document.getElementById("view-title");
 const subtitle = document.getElementById("view-subtitle");
+const viewIcon = document.getElementById("view-icon");
 const chatFeed = document.getElementById("chat-feed");
 const chatForm = document.getElementById("chat-form");
 const chatInput = document.getElementById("chat-input");
@@ -88,13 +90,20 @@ function modelActionsBlocked() {
 
 function setView(viewName) {
   document.querySelectorAll(".nav").forEach((button) => {
-    button.classList.toggle("is-active", button.dataset.view === viewName);
+    const active = button.dataset.view === viewName;
+    button.classList.toggle("is-active", active);
+    if (active) {
+      button.setAttribute("aria-current", "page");
+    } else {
+      button.removeAttribute("aria-current");
+    }
   });
   document.querySelectorAll(".view").forEach((view) => {
     view.classList.toggle("is-active", view.id === `view-${viewName}`);
   });
   title.textContent = views[viewName].title;
   subtitle.textContent = views[viewName].subtitle;
+  viewIcon.setAttribute("href", `#nav-${viewName}`);
 }
 
 function renderHostStatus() {
@@ -127,6 +136,9 @@ function renderAlerts() {
     if (llmIsOffline()) {
       alerts.push(["warning", "LLM offline", "Chat and natural-language tools are unavailable."]);
     }
+    if (state.providers && !state.providers.claude && !state.providers.codex) {
+      alerts.push(["warning", "No AI provider available", "Set the MCP_REVIT_ANTHROPIC_API_KEY environment variable and restart Revit, or install and sign in to the claude/codex CLI."]);
+    }
   }
 
   systemAlerts.hidden = alerts.length === 0;
@@ -150,6 +162,24 @@ function updateToolAvailability() {
   chatForm.querySelector("button").disabled = chatBlocked;
 }
 
+function applyProviderAvailability() {
+  if (!state.providers) {
+    return;
+  }
+  Array.from(chatProvider.options).forEach((option) => {
+    option.dataset.baseLabel = option.dataset.baseLabel || option.textContent;
+    const available = !!state.providers[option.value];
+    option.disabled = !available;
+    option.textContent = available ? option.dataset.baseLabel : `${option.dataset.baseLabel} (unavailable)`;
+  });
+  if (chatProvider.selectedOptions[0]?.disabled) {
+    const firstAvailable = Array.from(chatProvider.options).find((option) => !option.disabled);
+    if (firstAvailable) {
+      chatProvider.value = firstAvailable.value;
+    }
+  }
+}
+
 function renderSystemState() {
   renderHostStatus();
   renderAlerts();
@@ -167,7 +197,7 @@ function renderChat() {
 function appendMessage(role, text) {
   const item = document.createElement("article");
   item.className = `message ${role === "user" ? "user" : "assistant"}`;
-  item.innerHTML = `<div class="meta">${role === "user" ? "You" : "AMB"}</div><div>${escapeHtml(text)}</div>`;
+  item.innerHTML = `<div class="meta">${role === "user" ? "You" : '<svg class="mini-mark" width="14" height="14" aria-hidden="true"><use href="#brand-mark"/></svg> AMB'}</div><div>${escapeHtml(text)}</div>`;
   chatFeed.appendChild(item);
   chatFeed.scrollTop = chatFeed.scrollHeight;
   return item;
@@ -187,6 +217,12 @@ function resolvePendingChatMessage(text, isError) {
   chatFeed.scrollTop = chatFeed.scrollHeight;
 }
 
+function planStatusBadgeClass(status) {
+  if (status === "approved") return "success";
+  if (status === "rejected") return "error";
+  return "pending";
+}
+
 function renderPlans() {
   planList.innerHTML = "";
   if (state.plans.length === 0) {
@@ -200,11 +236,11 @@ function renderPlans() {
     item.innerHTML = `
       <div class="item-head">
         <h2>${escapeHtml(plan.title)}</h2>
-        <span class="badge pending">${escapeHtml(plan.status)}</span>
+        <span class="badge ${planStatusBadgeClass(plan.status)}">${escapeHtml(plan.status)}</span>
       </div>
       <p>${escapeHtml(plan.detail)}</p>
       <div class="item-actions">
-        <button type="button" data-plan="${escapeHtml(plan.id)}" data-decision="approve">Approve</button>
+        <button type="button" data-plan="${escapeHtml(plan.id)}" class="primary" data-decision="approve">Approve</button>
         <button type="button" data-plan="${escapeHtml(plan.id)}" data-decision="reject">Reject</button>
       </div>`;
     planList.appendChild(item);
@@ -223,12 +259,18 @@ function renderFindings() {
   findings.forEach((finding) => {
     const item = document.createElement("article");
     item.className = "item";
+    const selectButton = finding.elementUid
+      ? `<div class="item-actions">
+          <button type="button" data-select-uid="${escapeHtml(finding.elementUid)}">Select in Revit</button>
+        </div>`
+      : "";
     item.innerHTML = `
       <div class="item-head">
         <h2>${escapeHtml(finding.title)}</h2>
         <span class="badge ${escapeHtml(finding.severity)}">${escapeHtml(finding.severity)}</span>
       </div>
-      <p>${escapeHtml(finding.detail)}</p>`;
+      <p>${escapeHtml(finding.detail)}</p>
+      ${selectButton}`;
     findingList.appendChild(item);
   });
 }
@@ -274,7 +316,11 @@ function renderLog() {
 function renderEmpty(container, heading, detail) {
   const item = document.createElement("article");
   item.className = "empty";
-  item.innerHTML = `<strong>${escapeHtml(heading)}</strong><p>${escapeHtml(detail)}</p>`;
+  const iconView = { "plan-list": "plans", "finding-list": "findings", "report-list": "reports", "run-log": "log" }[container.id];
+  const icon = iconView
+    ? `<span class="empty-tile" aria-hidden="true"><svg class="ico" viewBox="0 0 32 32"><use href="#nav-${iconView}"/></svg></span>`
+    : "";
+  item.innerHTML = `${icon}<strong>${escapeHtml(heading)}</strong><p>${escapeHtml(detail)}</p>`;
   container.appendChild(item);
 }
 
@@ -322,6 +368,12 @@ document.body.addEventListener("click", (event) => {
     postToHost("reports.open", { reportId });
     addLog("Report opened", reportId);
   }
+
+  const selectUid = target.dataset.selectUid;
+  if (selectUid) {
+    postToHost("selection.set", { elementUids: [selectUid] });
+    addLog("Selection requested", selectUid);
+  }
 });
 
 chatForm.addEventListener("submit", (event) => {
@@ -363,6 +415,7 @@ function mapFindings(hubResult) {
   const findings = (hubResult && hubResult.findings) || [];
   return findings.map((finding, index) => ({
     id: finding.element_uid ? `${finding.rule_id}:${finding.element_uid}` : `${finding.rule_id}:${index}`,
+    elementUid: finding.element_uid || null,
     severity: finding.severity || "info",
     title: String(finding.rule_id || "finding").replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()),
     detail: finding.message || ""
@@ -391,10 +444,22 @@ function mapReport(hubResult) {
   };
 }
 
+// Maps one entry from GET /reports (packages/mcp-server-revit's panel_server.py) -
+// a plain workspace-directory listing, not an MCP tool result, since listing past
+// exports has no tool of its own.
+function mapReportEntry(entry) {
+  return {
+    id: entry.path,
+    title: entry.name,
+    detail: `Modified ${new Date(entry.modified * 1000).toLocaleString()}`
+  };
+}
+
 if (window.chrome && window.chrome.webview) {
   window.chrome.webview.addEventListener("message", (event) => {
     if (event.data?.type === "host.status") {
       state.host = event.data;
+      document.documentElement.dataset.theme = event.data.isDarkTheme ? "dark" : "light";
       renderSystemState();
       addLog("Host status updated", state.host.activeDocument || "No active document");
     }
@@ -404,6 +469,11 @@ if (window.chrome && window.chrome.webview) {
     }
     if (event.data?.type === "llm.status") {
       state.llm = event.data;
+      renderSystemState();
+    }
+    if (event.data?.type === "providers.updated") {
+      state.providers = event.data.providers;
+      applyProviderAvailability();
       renderSystemState();
     }
     if (event.data?.type === "findings.updated") {
@@ -421,6 +491,19 @@ if (window.chrome && window.chrome.webview) {
       state.reports = [report, ...state.reports];
       renderReports();
       addLog("Report exported", report.title);
+    }
+    if (event.data?.type === "reports.list") {
+      state.reports = (event.data.reports || []).map(mapReportEntry);
+      renderReports();
+      addLog("Reports refreshed", `${state.reports.length} report(s)`);
+    }
+    if (event.data?.type === "selection.result") {
+      const result = event.data.result || {};
+      const notFound = result.not_found_count || 0;
+      const detail = notFound > 0
+        ? `${result.selected_count || 0} selected, ${notFound} not found in the active document`
+        : `${result.selected_count || 0} selected`;
+      addLog("Selection updated", detail);
     }
     if (event.data?.type === "tool.error") {
       addLog(`Error: ${event.data.action || "tool"}`, event.data.message || "Unknown error");
@@ -454,3 +537,4 @@ renderReports();
 renderLog();
 renderSystemState();
 postToHost("panel.loaded");
+postToHost("providers.refresh");

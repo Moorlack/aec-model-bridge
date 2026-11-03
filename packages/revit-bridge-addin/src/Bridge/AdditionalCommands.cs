@@ -55,7 +55,12 @@ namespace RevitBridge.Bridge
             }
 
             message = error;
-            TaskDialog.Show(ProductInfo.ProductName, "The AEC Model Bridge panel could not be opened.\n\n" + error);
+            var dialog = new ModernDialog();
+            dialog.SetTitle(ProductInfo.ProductName, "Panel unavailable");
+            dialog.AddStatusCard("error", "Panel", "The AEC Model Bridge panel could not be opened.");
+            dialog.AddInfoSection("Details", error);
+            dialog.SetActionButton("OK");
+            dialog.ShowDialog();
             return Result.Failed;
         }
     }
@@ -75,7 +80,7 @@ namespace RevitBridge.Bridge
             dialog.SetTitle("Bridge Configuration", "Current local settings");
 
             dialog.AddInfoSection("Server Configuration",
-                "Address: http://127.0.0.1:3000/\n" +
+                $"Address: {(App.Server != null ? $"http://127.0.0.1:{App.Server.Port}/" : "dynamic localhost port")}\n" +
                 "Startup: Automatic with Revit\n" +
                 "Transport: Localhost HTTP\n" +
                 "Revit dispatch: ExternalEvent");

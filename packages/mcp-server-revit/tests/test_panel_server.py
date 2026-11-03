@@ -8,11 +8,14 @@ from __future__ import annotations
 
 import json
 import threading
+import time
 import urllib.error
 import urllib.request
+from unittest.mock import Mock
 
 import pytest
 
+from revit_mcp_server import panel_server
 from revit_mcp_server.panel_server import build_server
 from revit_mcp_server.security.workspace import WorkspaceMonitor
 
@@ -53,11 +56,10 @@ def _post(port: int, path: str, body: dict):
         return e.code, json.loads(e.read())
 
 
-def test_health_reports_tool_count(running_server):
+def test_health_reports_status_only(running_server):
     status, body = _get(running_server, "/health")
     assert status == 200
-    assert body["status"] == "healthy"
-    assert body["tools"] > 100  # ~218 across all providers/modules
+    assert body == {"status": "healthy"}
 
 
 def test_execute_runs_a_real_readonly_tool(running_server):
@@ -100,6 +102,47 @@ def test_mutating_tool_without_plan_is_rejected(running_server):
     assert "plan_id" in body["error"]
 
 
+def test_reports_lists_workspace_exports_newest_first(running_server, tmp_path):
+    """The Reports tab's Refresh button has no MCP tool behind it - it lists
+    whatever report_generator has already written to the workspace root."""
+    (tmp_path / "model_report.xlsx").write_bytes(b"x")
+    time.sleep(0.05)
+    (tmp_path / "model_data.db").write_bytes(b"x")
+
+    status, body = _get(running_server, "/reports")
+
+    assert status == 200
+    assert body["ok"] is True
+    assert [r["name"] for r in body["reports"]] == ["model_data.db", "model_report.xlsx"]
+
+
+def test_reports_excludes_internal_state_files(running_server, tmp_path):
+    """qaqc_issues.db is the QA/QC module's own tracking database, not
+    something report_generator exported - it must never appear as a report."""
+    (tmp_path / "qaqc_issues.db").write_bytes(b"x")
+
+    status, body = _get(running_server, "/reports")
+
+    assert status == 200
+    assert body["reports"] == []
+
+
+def test_reports_excludes_clash_triage_state_file(running_server, tmp_path):
+    (tmp_path / "clash_triage.db").write_bytes(b"x")
+
+    status, body = _get(running_server, "/reports")
+
+    assert status == 200
+    assert body["reports"] == []
+
+
+def test_reports_empty_workspace_returns_empty_list(running_server):
+    status, body = _get(running_server, "/reports")
+    assert status == 200
+    assert body["ok"] is True
+    assert body["reports"] == []
+
+
 def test_plan_actions_approve_execute_round_trip_over_http(running_server):
     """Proves the panel can drive the full W5 workflow end-to-end through
     HTTP alone: plan -> approve -> execute -> verify, all as separate
@@ -126,3 +169,257 @@ def test_plan_actions_approve_execute_round_trip_over_http(running_server):
     # an error (no live Revit process in tests). Accept "executed" (all OK) or
     # "partial" (some actions failed — expected here since Revit is unavailable).
     assert executed["result"]["state"] in ("executed", "partial")
+
+
+def test_agent_providers_none_available(running_server, monkeypatch):
+    """No API key configured and neither CLI on PATH: both providers are
+    reported unavailable."""
+    monkeypatch.setattr(panel_server.config, "anthropic_api_key", None)
+    monkeypatch.setattr(panel_server.shutil, "which", lambda _name: None)
+
+    status, body = _get(running_server, "/agent/providers")
+
+    assert status == 200
+    assert body == {"ok": True, "providers": {"claude": False, "codex": False}}
+
+
+def test_agent_providers_claude_true_with_api_key_configured(running_server, monkeypatch):
+    """An Anthropic API key alone is enough for the "claude" provider to be
+    reported available, even with no CLI on PATH at all."""
+    monkeypatch.setattr(panel_server.config, "anthropic_api_key", "test-key")
+    monkeypatch.setattr(panel_server.shutil, "which", lambda _name: None)
+
+    status, body = _get(running_server, "/agent/providers")
+
+    assert status == 200
+    assert body["providers"]["claude"] is True
+    assert body["providers"]["codex"] is False
+
+
+def test_agent_providers_claude_true_with_cli_fallback_only(running_server, monkeypatch):
+    """No API key, but the `claude` CLI resolves on PATH: "claude" is still
+    reported available via the CLI fallback."""
+    monkeypatch.setattr(panel_server.config, "anthropic_api_key", None)
+    monkeypatch.setattr(panel_server.shutil, "which", lambda name: "/usr/bin/claude" if name == "claude" else None)
+
+    status, body = _get(running_server, "/agent/providers")
+
+    assert status == 200
+    assert body["providers"]["claude"] is True
+    assert body["providers"]["codex"] is False
+
+
+def test_agent_chat_dispatches_to_native_when_api_key_configured(running_server, monkeypatch):
+    """Load-bearing dispatch-priority test: when an Anthropic API key is
+    configured, /agent/chat must go through agent_native.run_native_turn and
+    must NOT fall through to agent_bridge.run_agent_turn (the CLI path),
+    even though the request's provider field says "claude" (the field the
+    CLI path used to key off of)."""
+    monkeypatch.setattr(panel_server.config, "anthropic_api_key", "test-key")
+
+    native_calls = []
+    bridge_calls = []
+
+    def fake_native(message, session_id, registry, approval_provider):
+        native_calls.append((message, session_id, registry, approval_provider))
+        return {"ok": True, "response": "native reply", "session_id": "sess-native"}
+
+    def fake_bridge(provider, message, session_id):
+        bridge_calls.append((provider, message, session_id))
+        return {"ok": True, "response": "bridge reply", "session_id": "sess-bridge"}
+
+    monkeypatch.setattr(panel_server.agent_native, "run_native_turn", fake_native)
+    monkeypatch.setattr(panel_server.agent_bridge, "run_agent_turn", fake_bridge)
+
+    status, body = _post(running_server, "/agent/chat", {"message": "hi", "provider": "claude"})
+
+    assert status == 200
+    assert body == {"ok": True, "response": "native reply", "session_id": "sess-native"}
+    assert len(native_calls) == 1
+    assert native_calls[0][0] == "hi"
+    assert native_calls[0][1] is None
+    assert bridge_calls == []
+
+
+def test_agent_chat_explicit_codex_stays_on_cli_path_even_with_api_key_configured(running_server, monkeypatch):
+    """Regression test: codex has no native path (Task 1's ADR scopes it as
+    CLI-only regardless of API key state). An explicit provider: "codex"
+    request must always go through agent_bridge.run_agent_turn, even when an
+    Anthropic API key is configured and would otherwise route "claude" to
+    the native path."""
+    monkeypatch.setattr(panel_server.config, "anthropic_api_key", "test-key")
+    monkeypatch.setattr(panel_server.shutil, "which", lambda name: "/usr/bin/codex" if name == "codex" else None)
+
+    native_calls = []
+    bridge_calls = []
+
+    def fake_native(message, session_id, registry, approval_provider):
+        native_calls.append((message, session_id))
+        return {"ok": True, "response": "native reply", "session_id": "sess-native"}
+
+    def fake_bridge(provider, message, session_id):
+        bridge_calls.append((provider, message, session_id))
+        return {"ok": True, "response": "codex reply", "session_id": "sess-codex"}
+
+    monkeypatch.setattr(panel_server.agent_native, "run_native_turn", fake_native)
+    monkeypatch.setattr(panel_server.agent_bridge, "run_agent_turn", fake_bridge)
+
+    status, body = _post(running_server, "/agent/chat", {"message": "hi", "provider": "codex"})
+
+    assert status == 200
+    assert body == {"ok": True, "response": "codex reply", "session_id": "sess-codex"}
+    assert bridge_calls == [("codex", "hi", None)]
+    assert native_calls == []
+
+
+def test_agent_chat_no_provider_available_returns_error_without_dispatch(running_server, monkeypatch):
+    """No API key and no CLI on PATH: the chat request must fail fast with
+    the "no provider available" error, without ever calling either agent
+    module."""
+    monkeypatch.setattr(panel_server.config, "anthropic_api_key", None)
+    monkeypatch.setattr(panel_server.shutil, "which", lambda _name: None)
+
+    native_mock = Mock()
+    bridge_mock = Mock()
+    monkeypatch.setattr(panel_server.agent_native, "run_native_turn", native_mock)
+    monkeypatch.setattr(panel_server.agent_bridge, "run_agent_turn", bridge_mock)
+
+    status, body = _post(running_server, "/agent/chat", {"message": "hi"})
+
+    assert body == {
+        "ok": False,
+        "error": "No AI provider is available. Set the MCP_REVIT_ANTHROPIC_API_KEY environment variable "
+                 "and restart Revit, or install and sign in to the claude/codex CLI.",
+    }
+    native_mock.assert_not_called()
+    bridge_mock.assert_not_called()
+
+
+def test_configure_file_logging_persists_package_logs(tmp_path):
+    import logging
+
+    log_file = tmp_path / "Logs" / "panel-hub.log"
+    path = panel_server.configure_file_logging(log_file)
+    pkg_logger = logging.getLogger("revit_mcp_server")
+    try:
+        assert path == log_file
+        logging.getLogger("revit_mcp_server.panel_server").error("stale plan boom")
+        for h in pkg_logger.handlers:
+            h.flush()
+        assert "stale plan boom" in log_file.read_text(encoding="utf-8")
+    finally:
+        for h in list(pkg_logger.handlers):
+            if getattr(h, "baseFilename", None) == str(log_file):
+                pkg_logger.removeHandler(h)
+                h.close()
+
+
+def test_configure_file_logging_tolerates_unwritable_path(tmp_path):
+    blocker = tmp_path / "file"
+    blocker.write_text("x")
+    assert panel_server.configure_file_logging(blocker / "sub" / "panel-hub.log") is None
+
+
+def test_diagnostics_flags_mock_mode_with_next_step(running_server):
+    status, body = _get(running_server, "/diagnostics")
+    assert status == 200
+    checks = {c["id"]: c for c in body["checks"]}
+    assert checks["hub"]["ok"] is True
+    assert checks["workspace"]["ok"] is True
+    assert checks["mode"]["ok"] is False and "MCP_REVIT_MODE=bridge" in checks["mode"]["next_step"]
+    assert body["ok"] is False
+
+
+def test_diagnostics_reports_missing_revit_bridge(running_server, monkeypatch):
+    from revit_mcp_server.config import BridgeMode
+
+    monkeypatch.setattr(panel_server.config, "mode", BridgeMode.bridge)
+    monkeypatch.setattr("revit_mcp_server.bridge.discovery.available_host_versions", lambda *_a, **_k: [])
+    status, body = _get(running_server, "/diagnostics")
+    checks = {c["id"]: c for c in body["checks"]}
+    assert checks["revit_bridge"]["ok"] is False
+    assert "add-in" in checks["revit_bridge"]["next_step"]
+
+
+# --- Host / Origin / Content-Type checks ------------------------------------
+
+
+def _raw(port, method, path, headers=None, body=None):
+    """Request with full header control (urllib would override Host)."""
+    import http.client
+
+    conn = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+    try:
+        conn.putrequest(method, path, skip_host=True, skip_accept_encoding=True)
+        hdrs = {"Host": f"127.0.0.1:{port}"}
+        hdrs.update(headers or {})
+        data = body.encode("utf-8") if body is not None else None
+        if data is not None:
+            hdrs["Content-Length"] = str(len(data))
+        for k, v in hdrs.items():
+            conn.putheader(k, v)
+        conn.endheaders(data)
+        resp = conn.getresponse()
+        return resp.status, dict(resp.getheaders()), json.loads(resp.read() or b"{}")
+    finally:
+        conn.close()
+
+
+JSON_CT = {"Content-Type": "application/json"}
+EXEC_BODY = json.dumps({"tool": "list_pending_plans", "arguments": {}})
+
+
+def test_post_requires_json_content_type(running_server):
+    for ctype in ("text/plain", "application/x-www-form-urlencoded", "multipart/form-data"):
+        status, _, _ = _raw(running_server, "POST", "/execute", {"Content-Type": ctype}, EXEC_BODY)
+        assert status == 415, ctype
+    status, _, _ = _raw(running_server, "POST", "/execute", None, EXEC_BODY)  # no header
+    assert status == 415
+
+
+def test_json_content_type_with_charset_is_accepted(running_server):
+    status, _, body = _raw(
+        running_server, "POST", "/execute", {"Content-Type": "application/json; charset=utf-8"}, EXEC_BODY
+    )
+    assert status == 200 and body["ok"] is True
+
+
+@pytest.mark.parametrize("host", ["evil.example", "evil.example:%d", "127.0.0.1", "localhost:1", "127.0.0.1.evil.example:%d"])
+def test_bad_host_rejected(running_server, host):
+    host = host.replace("%d", str(running_server))
+    status, _, _ = _raw(running_server, "POST", "/execute", {**JSON_CT, "Host": host}, EXEC_BODY)
+    assert status == 403
+    status, _, _ = _raw(running_server, "GET", "/health", {"Host": host})
+    assert status == 403
+
+
+def test_localhost_host_is_allowed(running_server):
+    status, _, _ = _raw(running_server, "GET", "/health", {"Host": f"localhost:{running_server}"})
+    assert status == 200
+
+
+@pytest.mark.parametrize("origin", ["https://evil.example", "null", "http://127.0.0.1", "http://localhost:8787"])
+def test_any_origin_rejected(running_server, origin):
+    status, _, _ = _raw(running_server, "POST", "/execute", {**JSON_CT, "Origin": origin}, EXEC_BODY)
+    assert status == 403
+    status, _, _ = _raw(running_server, "GET", "/diagnostics", {"Origin": origin})
+    assert status == 403
+    status, _, _ = _raw(running_server, "GET", "/health", {"Origin": origin})
+    assert status == 403
+
+
+def test_no_cors_headers_and_options_not_served(running_server):
+    status, headers, _ = _raw(running_server, "GET", "/health")
+    assert status == 200
+    assert not any(k.lower().startswith("access-control-") for k in headers)
+    import http.client
+
+    conn = http.client.HTTPConnection("127.0.0.1", running_server, timeout=5)
+    try:
+        conn.request("OPTIONS", "/execute", headers={"Origin": "https://evil.example"})
+        resp = conn.getresponse()
+        resp.read()
+        assert resp.status >= 400
+        assert not any(k.lower().startswith("access-control-") for k, _ in resp.getheaders())
+    finally:
+        conn.close()

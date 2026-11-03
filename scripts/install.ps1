@@ -1,6 +1,6 @@
 param(
     [string]$RevitVersion = "2027",
-    [string]$Version = "1.1.0",
+    [string]$Version = $(if (Test-Path (Join-Path $PSScriptRoot '..\VERSION')) { (Get-Content (Join-Path $PSScriptRoot '..\VERSION') -Raw).Trim() } else { "" }),
     [switch]$AllUsers,
     [string]$DistPath
 )
@@ -163,6 +163,23 @@ $targetPython = "C:\ProgramData\AECModelBridge\python"
 if (Test-Path $sourcePython) {
     Write-Host "`nInstalling bundled Python runtime..." -ForegroundColor Yellow
     New-Item -ItemType Directory -Path $targetPython -Force | Out-Null
+
+    # Drop the previous server package first. Copying over the top left old
+    # aec_model_bridge-<version>.dist-info folders behind, and Python then reports
+    # the oldest one as the installed version.
+    $targetSite = Join-Path $targetPython "Lib\site-packages"
+    if (Test-Path -LiteralPath $targetSite) {
+        try {
+            Get-ChildItem -LiteralPath $targetSite -Directory -Filter "aec_model_bridge-*.dist-info" |
+                ForEach-Object { Remove-Item -LiteralPath $_.FullName -Recurse -Force }
+            $oldServer = Join-Path $targetSite "revit_mcp_server"
+            if (Test-Path -LiteralPath $oldServer) { Remove-Item -LiteralPath $oldServer -Recurse -Force }
+        }
+        catch {
+            Write-Warning "Could not remove the previous server package (is an MCP client running it?): $($_.Exception.Message)"
+        }
+    }
+
     Copy-Item "$sourcePython\*" $targetPython -Recurse -Force
     Write-Host "  Installed to: $targetPython" -ForegroundColor Green
 }
@@ -180,7 +197,7 @@ Write-Host "  Config:        $configTarget\default.json"
 Write-Host "`nNext steps:" -ForegroundColor Yellow
 Write-Host "  1. Restart Revit $RevitVersion" -ForegroundColor White
 Write-Host "  2. Open a project in Revit" -ForegroundColor White
-Write-Host "  3. Verify bridge: curl http://127.0.0.1:3000/health" -ForegroundColor White
+Write-Host "  3. Verify bridge: read %LOCALAPPDATA%\AECModelBridge\registry\revit-*.json and call its /health endpoint" -ForegroundColor White
 Write-Host "  4. Expected response: {`"status`":`"healthy`",`"revit_version`":`"$RevitVersion`",...}" -ForegroundColor Gray
 
 Write-Host "`nTo install MCP server:" -ForegroundColor Yellow

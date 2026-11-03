@@ -23,20 +23,25 @@ _SECRET_KEYS = {
 }
 
 _SECRET_VALUE_RE = re.compile(
-    r"(?i)\b(api[_-]?key|token|session[_-]?token|secret|password|passwd|session|authorization|rhinocomputekey)\b\s*[:=]\s*([^\s,;]+)"
+    r"(?i)(?<![a-z0-9])(api[_-]?key|token|session[_-]?token|secret|password|passwd|session|authorization|rhinocomputekey)\b\s*[:=]\s*([^\s,;]+)"
 )
 _WINDOWS_PATH_RE = re.compile(r"(?<!\w)(?:[A-Za-z]:[\\/](?:[^\s\"'<>|]+[\\/])*[^\s\"'<>|]+)")
 _POSIX_PATH_RE = re.compile(r"(?:(?<=^)|(?<=[\s\"'(<\[]))(/(?:[^/\s]+/)*[^/\s]+)")
+# UNC shares (\\server\share\model.rvt, the usual way central models are shared) and rooted
+# backslash paths without a drive letter (\projects\model.rvt). Needs at least two segments and
+# must not follow a word character, so "a\b" in ordinary text is left alone.
+_UNC_OR_ROOTED_PATH_RE = re.compile(r"(?<![\w\\:])\\{1,2}(?:[^\s\"'<>|\\/]+\\)+[^\s\"'<>|\\/]+")
 
 
 def _is_sensitive_key(key: str) -> bool:
     normalized = re.sub(r"[^a-z0-9]", "", key.strip().lower())
-    return normalized in _SECRET_KEYS
+    return any(normalized == secret or normalized.endswith(secret) for secret in _SECRET_KEYS)
 
 
 def _redact_text(value: str) -> str:
     sanitized = _SECRET_VALUE_RE.sub(lambda match: f"{match.group(1)}=<redacted>", value)
     sanitized = _WINDOWS_PATH_RE.sub("<redacted-path>", sanitized)
+    sanitized = _UNC_OR_ROOTED_PATH_RE.sub("<redacted-path>", sanitized)
     sanitized = _POSIX_PATH_RE.sub("<redacted-path>", sanitized)
     return sanitized
 

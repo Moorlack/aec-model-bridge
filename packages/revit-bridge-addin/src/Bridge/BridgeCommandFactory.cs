@@ -811,7 +811,9 @@ public static class BridgeCommandFactory
                 doc.Regenerate();
             }
 
-            var window = doc.Create.NewFamilyInstance(location, familySymbol, wall, Autodesk.Revit.DB.Structure.StructuralType.NonStructural);
+            var level = GetPlacementLevel(doc, wall, location);
+            var window = doc.Create.NewFamilyInstance(location, familySymbol, wall, level, Autodesk.Revit.DB.Structure.StructuralType.NonStructural);
+            SetWindowSillHeight(window, location, level);
 
             trans.Commit();
 
@@ -820,7 +822,9 @@ public static class BridgeCommandFactory
                 window_id = window.Id.Value,
                 family = familyName,
                 type = typeName,
-                wall_id = wallId
+                wall_id = wallId,
+                level = level.Name,
+                sill_height = location.Z - level.Elevation
             };
         }
     }
@@ -1001,6 +1005,35 @@ public static class BridgeCommandFactory
             throw new ArgumentException($"Level '{name}' not found");
 
         return level;
+    }
+
+    private static Level GetPlacementLevel(Document doc, Wall wall, XYZ location)
+    {
+        if (wall.LevelId != ElementId.InvalidElementId)
+        {
+            var wallLevel = doc.GetElement(wall.LevelId) as Level;
+            if (wallLevel != null)
+                return wallLevel;
+        }
+
+        var level = new FilteredElementCollector(doc)
+            .OfClass(typeof(Level))
+            .Cast<Level>()
+            .OrderBy(l => Math.Abs(l.Elevation - location.Z))
+            .FirstOrDefault();
+
+        if (level == null)
+            throw new InvalidOperationException("No levels found for hosted placement");
+
+        return level;
+    }
+
+    private static void SetWindowSillHeight(FamilyInstance window, XYZ location, Level level)
+    {
+        var sillHeight = location.Z - level.Elevation;
+        var sillParam = window.get_Parameter(BuiltInParameter.INSTANCE_SILL_HEIGHT_PARAM);
+        if (sillParam != null && !sillParam.IsReadOnly)
+            sillParam.Set(sillHeight);
     }
 
     private static WallType GetWallTypeByName(Document doc, string name)
@@ -2437,6 +2470,37 @@ public static class BridgeCommandFactory
 
         uidoc.Selection.SetElementIds(ids);
         return new { selected_count = ids.Count };
+    }
+
+    // UniqueId is stable across sessions (unlike ElementId, which revit.set_selection
+    // takes) - the panel only has UniqueIds from QA/QC findings, which come from a
+    // stored snapshot, not the live document. Not mutating: this only changes the
+    // active view's selection/framing, never the document.
+    [BridgeCommand("revit.select_by_unique_ids", IsMutating = false)]
+    private static object ExecuteSelectByUniqueIds(UIApplication app, JsonElement payload)
+    {
+        var uidoc = app.ActiveUIDocument;
+        if (uidoc == null) throw new InvalidOperationException("No active UIDocument");
+
+        var doc = uidoc.Document;
+        var requestedUids = payload.GetProperty("element_uids").EnumerateArray()
+            .Select(x => x.GetString())
+            .ToList();
+
+        var ids = requestedUids
+            .Select(uid => doc.GetElement(uid))
+            .Where(element => element != null)
+            .Select(element => element.Id)
+            .ToList();
+
+        if (ids.Count == 0)
+        {
+            return new { selected_count = 0, not_found_count = requestedUids.Count };
+        }
+
+        uidoc.Selection.SetElementIds(ids);
+        uidoc.ShowElements(ids);
+        return new { selected_count = ids.Count, not_found_count = requestedUids.Count - ids.Count };
     }
 
     [BridgeCommand("revit.create_text_note", IsMutating = true)]
@@ -4378,7 +4442,7 @@ public static class BridgeCommandFactory
         var workspaceDir = Environment.GetEnvironmentVariable("MCP_REVIT_WORKSPACE_DIR") ?? Path.GetTempPath();
         var snapshotDir = Path.Combine(workspaceDir, "snapshots");
         Directory.CreateDirectory(snapshotDir);
-        var snapshotPath = Path.Combine(snapshotDir, $"snapshot-{snapshotId}.json");
+        var snapshotPath = Path.Combine(snapshotDir, $"{snapshotId}.json");
 
         var elementsToExtract = new List<Element>();
         var dirtyIds = DocumentDirtyTracker.GetDirtyUniqueIds();

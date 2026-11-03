@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Text.Json;
 using System.Threading.Tasks;
@@ -21,6 +22,7 @@ namespace RevitBridge.UI
         public BridgePanel()
         {
             InitializeComponent();
+            FallbackLogo.Source = BrandMark.CreateImageSource();
             Loaded += async (_, _) => await InitializeWebViewAsync();
         }
 
@@ -102,8 +104,11 @@ namespace RevitBridge.UI
         /// <summary>
         /// Maps a panel message type to a real hub tool call and posts the result back.
         /// chat.message shells out to a CLI agent (see agent_bridge.py) rather than
-        /// calling a tool directly; settings/report-browsing remain local-only for now
-        /// (no corresponding hub tool).
+        /// calling a tool directly; reports.refresh/open and selection.set have no MCP
+        /// tool for one side of the round trip (reports.open opens a local file, and
+        /// reports.refresh lists the workspace directly via the panel hub's /reports
+        /// endpoint, not a tool call). settings remains local-only for now (no
+        /// corresponding hub tool).
         /// </summary>
         private async Task DispatchToHubAsync(string message)
         {
@@ -150,6 +155,86 @@ namespace RevitBridge.UI
                     await RunToolAndPostAsync("report_generator_export_excel", new { }, "reports.updated", type);
                     break;
 
+                case "reports.refresh":
+                {
+                    var reports = await HubClient.ListReportsAsync();
+                    if (!reports.Ok)
+                    {
+                        PostToPanel(new { type = "tool.error", action = type, message = reports.Error });
+                        break;
+                    }
+
+                    PostToPanel(new { type = "reports.list", reports = reports.Result });
+                    break;
+                }
+
+                case "providers.refresh":
+                {
+                    var providers = await HubClient.GetProvidersAsync();
+                    if (!providers.Ok)
+                    {
+                        PostToPanel(new { type = "tool.error", action = type, message = providers.Error });
+                        break;
+                    }
+
+                    PostToPanel(new { type = "providers.updated", providers = new { claude = providers.Claude, codex = providers.Codex } });
+                    break;
+                }
+
+                case "reports.open":
+                {
+                    var path = root.TryGetProperty("reportId", out var pathEl) ? pathEl.GetString() : null;
+                    if (string.IsNullOrEmpty(path))
+                    {
+                        break;
+                    }
+
+                    if (!File.Exists(path))
+                    {
+                        PostToPanel(new { type = "tool.error", action = type, message = $"Report file not found: {path}" });
+                        break;
+                    }
+
+                    try
+                    {
+                        Process.Start(new ProcessStartInfo(path) { UseShellExecute = true });
+                    }
+                    catch (Exception ex)
+                    {
+                        Log.Warning(ex, "Failed to open report file {Path}", path);
+                        PostToPanel(new { type = "tool.error", action = type, message = $"Could not open report: {ex.Message}" });
+                    }
+                    break;
+                }
+
+                case "selection.set":
+                {
+                    var elementUids = new List<string>();
+                    if (root.TryGetProperty("elementUids", out var uidsEl) && uidsEl.ValueKind == JsonValueKind.Array)
+                    {
+                        foreach (var uidEl in uidsEl.EnumerateArray())
+                        {
+                            var uid = uidEl.GetString();
+                            if (!string.IsNullOrEmpty(uid))
+                            {
+                                elementUids.Add(uid);
+                            }
+                        }
+                    }
+
+                    if (elementUids.Count == 0)
+                    {
+                        break;
+                    }
+
+                    await RunToolAndPostAsync(
+                        "revit_select_by_unique_ids",
+                        new { element_uids = elementUids },
+                        "selection.result",
+                        type);
+                    break;
+                }
+
                 case "chat.message":
                 {
                     var text = root.TryGetProperty("message", out var msgEl) ? msgEl.GetString() : null;
@@ -190,6 +275,32 @@ namespace RevitBridge.UI
             }
         }
 
+        /// <summary>
+        /// Called when Revit's UI theme changes mid-session (subscribed in
+        /// BridgePanelProvider.Register) so the panel re-themes live via a fresh
+        /// host.status. Only the panel updates live - ribbon icons are generated
+        /// once at startup (see App.CreateModernRibbonInterface).
+        /// </summary>
+        internal void OnRevitThemeChanged()
+        {
+            Dispatcher.BeginInvoke(new Action(() =>
+            {
+                if (!_pageReady)
+                {
+                    return;
+                }
+
+                try
+                {
+                    PostHostStatus();
+                }
+                catch (Exception ex)
+                {
+                    Log.Warning(ex, "Failed to post host status after Revit theme change");
+                }
+            }));
+        }
+
         private void PostHostStatus()
         {
             var dirtyCount = DocumentDirtyTracker.GetDirtyUniqueIds().Count;
@@ -201,7 +312,8 @@ namespace RevitBridge.UI
                 revitVersion = App.RevitVersion,
                 activeDocument = App.ActiveDocumentName,
                 dirtyElementCount = dirtyCount,
-                snapshotStale = dirtyCount > 0
+                snapshotStale = dirtyCount > 0,
+                isDarkTheme = IconGenerator.IsDarkTheme()
             });
 
             Browser.CoreWebView2?.PostWebMessageAsJson(payload);
@@ -229,7 +341,13 @@ namespace RevitBridge.UI
 
         private void LoadPanelApp()
         {
-            var panelPath = Path.Combine(AppContext.BaseDirectory, "panel", "index.html");
+            // AppContext.BaseDirectory resolves to the host process's directory (Revit.exe,
+            // under Program Files) for an add-in assembly Revit loads into its own process -
+            // not this DLL's directory - so it silently missed the real panel every time and
+            // fell back to BuildShellHtml() below. Assembly.Location is what App.cs already
+            // uses for the same reason when locating ribbon icons next to this DLL.
+            var assemblyDir = Path.GetDirectoryName(System.Reflection.Assembly.GetExecutingAssembly().Location) ?? AppContext.BaseDirectory;
+            var panelPath = Path.Combine(assemblyDir, "panel", "index.html");
             if (File.Exists(panelPath))
             {
                 Browser.Source = new Uri(panelPath);

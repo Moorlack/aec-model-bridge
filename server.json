@@ -2,11 +2,11 @@
     "$schema":  "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
     "name":  "io.github.Sam-AEC/aec-model-bridge",
     "title":  "AEC Model Bridge",
-    "description":  "Independent MCP integration for Autodesk Revit software through a local bridge.",
+    "description":  "Revit MCP server: 200+ tools to read and edit BIM models, every change human-approved.",
     "websiteUrl":  "https://github.com/Sam-AEC/aec-model-bridge",
     "icons":  [
                   {
-                      "src":  "https://raw.githubusercontent.com/Sam-AEC/aec-model-bridge/main/assets/logo.svg",
+                      "src":  "https://raw.githubusercontent.com/Sam-AEC/aec-model-bridge/main/assets/logo-mark.svg",
                       "mimeType":  "image/svg+xml",
                       "sizes":  [
                                     "any"
@@ -18,13 +18,13 @@
                        "source":  "github",
                        "subfolder":  "packages/mcp-server-revit"
                    },
-    "version":  "1.2.0",
+    "version":  "1.4.0",
     "packages":  [
                      {
                          "registryType":  "mcpb",
-                         "identifier":  "https://github.com/Sam-AEC/aec-model-bridge/releases/download/v1.2.0/aec-model-bridge-1.2.0.mcpb",
+                         "identifier":  "https://github.com/Sam-AEC/aec-model-bridge/releases/download/v1.4.0/aec-model-bridge-1.4.0.mcpb",
                          "fileSha256":  "005c9524735ccb1c5d51432bb0969bbd1ad27c4a3765565be8c80922885854a1",
-                         "version":  "1.2.0",
+                         "version":  "1.4.0",
                          "transport":  {
                                            "type":  "stdio"
                                        },
@@ -33,14 +33,14 @@
                                                           "name":  "MCP_REVIT_WORKSPACE_DIR",
                                                           "description":  "Workspace root directory for server file operations.",
                                                           "isSecret":  false,
-                                                          "isRequired":  true,
+                                                          "isRequired":  false,
                                                           "format":  "string"
                                                       },
                                                       {
                                                           "name":  "MCP_REVIT_ALLOWED_DIRECTORIES",
                                                           "description":  "Semicolon-delimited allow-list of directories the server can access.",
                                                           "isSecret":  false,
-                                                          "isRequired":  true,
+                                                          "isRequired":  false,
                                                           "format":  "string"
                                                       },
                                                       {
@@ -70,6 +70,37 @@
                                                           "name":  "MCP_REVIT_LOG_LEVEL",
                                                           "description":  "Python log level, for example INFO or DEBUG.",
                                                           "isSecret":  false,
+                                                          "isRequired":  false,
+                                                          "format":  "string"
+                                                      },
+                                                      {
+                                                          "name":  "MCP_REVIT_APPROVAL_MODE",
+                                                          "description":  "Approval gate for write tools. \"required\" (default) blocks every model change until a human approves a plan; do not relax this unless you understand the risk.",
+                                                          "isSecret":  false,
+                                                          "isRequired":  false,
+                                                          "default":  "required",
+                                                          "format":  "string"
+                                                      },
+                                                      {
+                                                          "name":  "MCP_REVIT_ENABLE_USER_MODULES",
+                                                          "description":  "Set to true to load user-written modules from the workspace. Off by default.",
+                                                          "isSecret":  false,
+                                                          "isRequired":  false,
+                                                          "default":  "false",
+                                                          "format":  "boolean"
+                                                      },
+                                                      {
+                                                          "name":  "MCP_REVIT_ALLOW_PYTHON_HOST",
+                                                          "description":  "Set to true to allow module commands that declare the python.host permission to run. Off by default.",
+                                                          "isSecret":  false,
+                                                          "isRequired":  false,
+                                                          "default":  "false",
+                                                          "format":  "boolean"
+                                                      },
+                                                      {
+                                                          "name":  "MCP_REVIT_ANTHROPIC_API_KEY",
+                                                          "description":  "Optional Anthropic API key, used only by the built-in agent chat in the Revit panel. Not needed for MCP use.",
+                                                          "isSecret":  true,
                                                           "isRequired":  false,
                                                           "format":  "string"
                                                       }

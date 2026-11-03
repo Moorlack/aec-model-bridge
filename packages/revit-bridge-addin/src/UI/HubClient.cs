@@ -50,6 +50,38 @@ namespace RevitBridge.UI
             }
         }
 
+        public static async Task<HubResult> ListReportsAsync()
+        {
+            try
+            {
+                using (var response = await Client.GetAsync($"http://127.0.0.1:{Port}/reports").ConfigureAwait(false))
+                {
+                    var text = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
+                    return ParseReportsResponse(text, (int)response.StatusCode);
+                }
+            }
+            catch (Exception ex)
+            {
+                return HubResult.Failure($"Could not reach the AEC Model Bridge hub on 127.0.0.1:{Port}: {ex.Message}");
+            }
+        }
+
+        public static async Task<ProvidersResult> GetProvidersAsync()
+        {
+            try
+            {
+                using (var response = await Client.GetAsync($"http://127.0.0.1:{Port}/agent/providers").ConfigureAwait(false))
+                {
+                    var text = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
+                    return ParseProvidersResponse(text, (int)response.StatusCode);
+                }
+            }
+            catch (Exception ex)
+            {
+                return ProvidersResult.Failure($"Could not reach the AEC Model Bridge hub on 127.0.0.1:{Port}: {ex.Message}");
+            }
+        }
+
         public static async Task<ChatResult> ChatAsync(string provider, string message, string sessionId)
         {
             var requestBody = JsonSerializer.Serialize(new { provider, message, session_id = sessionId });
@@ -66,6 +98,29 @@ namespace RevitBridge.UI
             catch (Exception ex)
             {
                 return ChatResult.Failure($"Could not reach the AEC Model Bridge hub on 127.0.0.1:{Port}: {ex.Message}");
+            }
+        }
+
+        private static HubResult ParseReportsResponse(string text, int statusCode)
+        {
+            try
+            {
+                using (var doc = JsonDocument.Parse(text))
+                {
+                    var root = doc.RootElement;
+                    var ok = root.TryGetProperty("ok", out var okEl) && okEl.ValueKind == JsonValueKind.True;
+                    if (ok && root.TryGetProperty("reports", out var reportsEl))
+                    {
+                        return HubResult.Success(reportsEl.Clone());
+                    }
+
+                    var error = root.TryGetProperty("error", out var errEl) ? errEl.GetString() : null;
+                    return HubResult.Failure(error ?? $"Hub returned HTTP {statusCode}");
+                }
+            }
+            catch (JsonException)
+            {
+                return HubResult.Failure($"Hub returned an unparseable response (HTTP {statusCode})");
             }
         }
 
@@ -89,6 +144,31 @@ namespace RevitBridge.UI
             catch (JsonException)
             {
                 return HubResult.Failure($"Hub returned an unparseable response (HTTP {statusCode})");
+            }
+        }
+
+        private static ProvidersResult ParseProvidersResponse(string text, int statusCode)
+        {
+            try
+            {
+                using (var doc = JsonDocument.Parse(text))
+                {
+                    var root = doc.RootElement;
+                    var ok = root.TryGetProperty("ok", out var okEl) && okEl.ValueKind == JsonValueKind.True;
+                    if (ok && root.TryGetProperty("providers", out var providersEl))
+                    {
+                        var claude = providersEl.TryGetProperty("claude", out var claudeEl) && claudeEl.ValueKind == JsonValueKind.True;
+                        var codex = providersEl.TryGetProperty("codex", out var codexEl) && codexEl.ValueKind == JsonValueKind.True;
+                        return ProvidersResult.Success(claude, codex);
+                    }
+
+                    var error = root.TryGetProperty("error", out var errEl) ? errEl.GetString() : null;
+                    return ProvidersResult.Failure(error ?? $"Hub returned HTTP {statusCode}");
+                }
+            }
+            catch (JsonException)
+            {
+                return ProvidersResult.Failure($"Hub returned an unparseable response (HTTP {statusCode})");
             }
         }
 
@@ -153,5 +233,25 @@ namespace RevitBridge.UI
         public static ChatResult Success(string response, string sessionId) => new ChatResult(true, response, sessionId, null);
 
         public static ChatResult Failure(string error) => new ChatResult(false, null, null, error);
+    }
+
+    internal readonly struct ProvidersResult
+    {
+        public bool Ok { get; }
+        public bool Claude { get; }
+        public bool Codex { get; }
+        public string Error { get; }
+
+        private ProvidersResult(bool ok, bool claude, bool codex, string error)
+        {
+            Ok = ok;
+            Claude = claude;
+            Codex = codex;
+            Error = error;
+        }
+
+        public static ProvidersResult Success(bool claude, bool codex) => new ProvidersResult(true, claude, codex, null);
+
+        public static ProvidersResult Failure(string error) => new ProvidersResult(false, false, false, error);
     }
 }

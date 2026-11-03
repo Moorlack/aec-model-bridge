@@ -1,0 +1,96 @@
+# Low-noise policy: routine version updates are monthly and grouped into ONE pull
+# request per ecosystem. Security updates are separate and still arrive immediately
+# (Settings -> Code security -> Dependabot security updates), so nothing important
+# is lost by keeping the routine ones quiet.
+version: 2
+updates:
+  - package-ecosystem: pip
+    directory: /packages/mcp-server-revit
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 1
+    # Only refresh the pinned versions in uv.lock. Never rewrite the version
+    # ranges in pyproject.toml: widening mcp to <3 would pull in 2.x, which
+    # crashes this server at import.
+    versioning-strategy: lockfile-only
+    groups:
+      python-dependencies:
+        patterns: ["*"]
+      python-security:
+        applies-to: security-updates
+        patterns: ["*"]
+    ignore:
+      # mcp 2.x removed the low-level Server decorators this server is built on,
+      # so it crashes at import. Keep the cap in pyproject.toml until the server
+      # is ported, then lift it by hand.
+      - dependency-name: mcp
+        versions: [">=2"]
+      # specklepy is capped below 4 on purpose; a major needs a manual port.
+      - dependency-name: specklepy
+        versions: [">=4"]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 1
+    # Wait two weeks after a release before proposing it: a compromised or broken
+    # release is usually caught within days.
+    cooldown:
+      default-days: 14
+    groups:
+      github-actions:
+        update-types: ["minor", "patch"]
+        patterns: ["*"]
+      github-actions-security:
+        applies-to: security-updates
+        patterns: ["*"]
+    ignore:
+      # Actions are pinned by commit SHA. Major bumps (new Node runtime, changed inputs)
+      # are reviewed by hand, and the grouped PR must never move a pin backwards.
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
+
+  # The .NET add-ins compile against Revit, Rhino and Navisworks SDKs and ship
+  # deliberate pins (IronPython 2.7 on net48, WebView2, RhinoCommon 7). Routine
+  # version bumps here cost review time and carry real risk, so version updates
+  # are off (limit 0). Security advisories still open their own pull requests.
+  - package-ecosystem: nuget
+    directory: /packages/revit-bridge-addin
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 0
+    groups:
+      nuget-security:
+        applies-to: security-updates
+        patterns: ["*"]
+
+  - package-ecosystem: nuget
+    directory: /packages/rhino-bridge-addin
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 0
+    groups:
+      nuget-security:
+        applies-to: security-updates
+        patterns: ["*"]
+
+  - package-ecosystem: nuget
+    directory: /packages/navisworks-bridge-addin
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 0
+    groups:
+      nuget-security:
+        applies-to: security-updates
+        patterns: ["*"]
+
+  - package-ecosystem: nuget
+    directory: /packages/powerbi-bridge-tool
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 0
+    groups:
+      nuget-security:
+        applies-to: security-updates
+        patterns: ["*"]

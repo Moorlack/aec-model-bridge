@@ -1,0 +1,57 @@
+---
+config:
+  look: neo
+  flowchart:
+    htmlLabels: true
+    nodeSpacing: 40
+    rankSpacing: 36
+    padding: 14
+  theme: base
+  themeVariables:
+    primaryColor: "#334155"
+    primaryTextColor: "#FFFFFF"
+    primaryBorderColor: "#1E293B"
+    secondaryColor: "#334155"
+    tertiaryColor: "#334155"
+    lineColor: "#6E7781"
+    textColor: "#6E7781"
+    titleColor: "#6E7781"
+    nodeTextColor: "#FFFFFF"
+    clusterBkg: "rgba(110,119,129,0.10)"
+    clusterBorder: "#6E7781"
+    edgeLabelBackground: "#334155"
+    actorBkg: "#334155"
+    actorTextColor: "#FFFFFF"
+    actorBorder: "#1E293B"
+    actorLineColor: "#6E7781"
+    signalColor: "#6E7781"
+    signalTextColor: "#6E7781"
+    labelBoxBkgColor: "#334155"
+    labelBoxBorderColor: "#6E7781"
+    labelTextColor: "#FFFFFF"
+    loopTextColor: "#6E7781"
+    sequenceNumberColor: "#FFFFFF"
+    noteBkgColor: "#F59E0B"
+    noteTextColor: "#1F1300"
+    noteBorderColor: "#92400E"
+    transitionColor: "#6E7781"
+    transitionLabelColor: "#FFFFFF"
+    stateLabelColor: "#FFFFFF"
+    stateBkg: "#334155"
+    labelBackgroundColor: "#334155"
+    compositeBackground: "#334155"
+    specialStateColor: "#6E7781"
+---
+flowchart TB
+  A["<b>Draft plan</b><br/>AI assistant calls plan_actions"] --> B["<b>Show proposed changes</b><br/>counts, scope, before / after"]
+  B --> C["<b>Human approves</b><br/>in the side panel or the CLI<br/>aec-model-bridge-approve<br/>(never over MCP)"]
+  C --> D["<b>Hub checks the plan matches</b><br/>same tool, same arguments, once only"]
+  D --> E["<b>Revit runs each action</b><br/>in its own transaction"]
+  E --> F["<b>Verify</b><br/>read the values back"]
+  F --> G["<b>Undo with Ctrl+Z</b><br/>one press per action"]
+  F --> H["<b>Or rollback_plan</b><br/>writes before-values back in reverse<br/>may skip actions with no before-value"]
+  C -. "reject, or never approve" .-> X["<b>Blocked</b><br/>the model is untouched"]
+  classDef human fill:#1CB5CA,stroke:#111923,color:#06222A
+  classDef stop fill:#F59E0B,stroke:#92400E,color:#1F1300
+  class C human
+  class X stop
